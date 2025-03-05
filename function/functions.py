@@ -1,301 +1,146 @@
 from sqlite3 import connect
 from key import *
 from databas import *
-from aiogram import *
-from aiogram.types import *
+from aiogram import Bot, exceptions, types
 import asyncio
 import aiohttp
+
+bot = Bot(token=BOT_TOKEN)
 
 class functions:
     @staticmethod
     async def check_on_start(user_id):
         rows = sql.execute("SELECT id FROM channels").fetchall()
-        error_code = 0
         for row in rows:
-            r = await dp.bot.get_chat_member(chat_id=row[0], user_id=user_id)
-            if r.status in ['member', 'creator', 'admin']:
-                pass
-            else:
-                error_code = 1
-        if error_code == 0:
-            return True
-        else:
-            return False
+            try:
+                r = await bot.get_chat_member(chat_id=row[0], user_id=user_id)
+                if r.status not in ['member', 'creator', 'administrator']:
+                    return False
+            except exceptions.TelegramAPIError:
+                return False
+        return True
 
 class panel_func:
     @staticmethod
     async def channel_add(id):
-        sql.execute("""CREATE TABLE IF NOT EXISTS channels(id)""")
+        sql.execute("""CREATE TABLE IF NOT EXISTS channels(id INTEGER PRIMARY KEY)""")
         db.commit()
-        sql.execute("INSERT INTO channels VALUES(?);", id)
+        sql.execute("INSERT OR IGNORE INTO channels VALUES(?)", (id,))
         db.commit()
-
 
     @staticmethod
     async def channel_delete(id):
-        sql.execute(f'DELETE FROM channels WHERE id = "{id}"')
+        sql.execute("DELETE FROM channels WHERE id = ?", (id,))
         db.commit()
 
     @staticmethod
     async def channel_list():
-        sql.execute("SELECT id from channels")
-        str = ''
-        for row in sql.fetchall():
+        rows = sql.execute("SELECT id FROM channels").fetchall()
+        result = ""
+        for row in rows:
             id = row[0]
             try:
-                all_details = await dp.bot.get_chat(chat_id=id)
-                title = all_details["title"]
-                channel_id = all_details["id"]
-                info = all_details["description"]
-                str+= f"------------------------------------------------\nKanal useri: > {id}\nKamal nomi: > {title}\nKanal id si: > {channel_id}\nKanal haqida: > {info}\n"
-            except:
-                str+= "Kanalni admin qiling"
-        return str
+                all_details = await bot.get_chat(chat_id=id)
+                result += (
+                    f"------------------------------------------------\n"
+                    f"Kanal useri: > {id}\n"
+                    f"Kanal nomi: > {all_details.title}\n"
+                    f"Kanal ID: > {all_details.id}\n"
+                    f"Kanal haqida: > {all_details.description or 'Mavjud emas'}\n"
+                )
+            except exceptions.TelegramAPIError:
+                result += f"Kanalni admin qiling: {id}\n"
+        return result or "Hech qanday kanal mavjud emas."
 
 async def forward_send_msg(chat_id: int, from_chat_id: int, message_id: int) -> bool:
     try:
-        await dp.bot.forward_message(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id)
-    except exceptions.BotBlocked:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.ChatNotFound:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.UserDeactivated:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.TelegramAPIError:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    else:
+        await bot.forward_message(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id)
         return True
-    return False
+    except (exceptions.BotBlocked, exceptions.ChatNotFound, exceptions.UserDeactivated, exceptions.TelegramAPIError):
+        sql.execute("DELETE FROM users WHERE user_id = ?", (chat_id,))
+        db.commit()
+        return False
 
 async def send_message_chats(chat_id: int, from_chat_id: int, message_id: int) -> bool:
     try:
-        await dp.bot.copy_message(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id)
-    except exceptions.BotBlocked:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.ChatNotFound:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.UserDeactivated:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    except exceptions.TelegramAPIError:
-        sql.execute(f"DELETE FROM users WHERE user_id ='{chat_id}'")
-        db.commit()
-    else:
+        await bot.copy_message(chat_id=chat_id, from_chat_id=from_chat_id, message_id=message_id)
         return True
-    return False
-
+    except (exceptions.BotBlocked, exceptions.ChatNotFound, exceptions.UserDeactivated, exceptions.TelegramAPIError):
+        sql.execute("DELETE FROM users WHERE user_id = ?", (chat_id,))
+        db.commit()
+        return False
 
 async def get_site_content(URL):
     async with aiohttp.ClientSession() as session:
         async with session.get(URL) as resp:
-            text = await resp.json()
-    return text
-
+            return await resp.json()
 
 async def search_vakant(user_id, page):
-        reg0 = sql.execute(f"""SELECT region FROM users WHERE user_id = {user_id}""").fetchone()[0]
-        reg1 = sql.execute(f"""SELECT district FROM users WHERE user_id = {user_id} """).fetchone()[0]
-        specs = sql.execute(f"""SELECT specs FROM users WHERE user_id = {user_id} """).fetchone()[0]
-        if specs==None:
-            spec = "&"
-        else:
-            spec = f"&nskz={specs}&"
-        if reg1 == 0:
-            if reg0 == "Barchasi":
-                reg2=0
-            else:
-                reg2 = sql.execute(f"""SELECT reg_ids FROM locations WHERE regions = "{reg0}" """).fetchone()[0]
-        elif reg1 == None:
-            if reg0 == None:
-                reg2=0
-            else:
-                reg2 = sql.execute(f"""SELECT reg_ids FROM locations WHERE regions = "{reg0}" """).fetchone()[0]
-        else:
-            reg2 = sql.execute(f"""SELECT dist_ids FROM locations WHERE districts = "{reg1}" """).fetchone()[0]
-        salary = sql.execute(f"""SELECT money FROM users WHERE user_id = {user_id}""").fetchone()[0]
-        level = sql.execute(f"""SELECT level FROM users WHERE user_id = {user_id}""").fetchone()[0]
-        ##
-        dict2 = {'⭕️Ahamiyatsiz️':0, '1 mln ➕':1000000, '3 mln ➕':3000000}
-        dict3 = {'️⭕️Ahamiyatsiz':0, "👨‍💼O'rta maxsus":'ССПО', '👨‍🎓Oliy':"В%2FО"}
-        if level == None:
-            levelim = '&'
-        elif dict3[level] == 0:
-            levelim = '&'
-        else:
-            levelim = f"&min_education={dict3[level]}&"
-        if salary == None:
-            salarym = '&'
-        elif dict2[salary] == 0:
-            salarym = '&'
-        else:
-            salarym = f"salary={dict2[salary]}&"
-        if levelim=='&' and salarym=='&':
-            optimal = '&'
-        else:
-            optimal = levelim + salarym
-        URL = f"https://ishapi.mehnat.uz/api/v1/vacancies?per_page=5{optimal}company_soato_code={reg2}{spec}page={page}"
-        soup = await get_site_content(URL)
+    user_data = sql.execute("SELECT region, district, specs, money, level FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    if not user_data:
+        return "Foydalanuvchi topilmadi", [], 0, 0, 0
 
-        try:
-            text = soup['data']['data']
+    reg0, reg1, specs, salary, level = user_data
+    spec = f"&nskz={specs}&" if specs else "&"
+    
+    if reg1 and reg1 != 0:
+        reg2 = sql.execute("SELECT dist_ids FROM locations WHERE districts = ?", (reg1,)).fetchone()
+    else:
+        reg2 = sql.execute("SELECT reg_ids FROM locations WHERE regions = ?", (reg0,)).fetchone()
+    
+    reg2 = reg2[0] if reg2 else 0
 
-            num = soup['data']['from']
-            texts = ''
-            ids = []
-            for i in text:
+    salary_dict = {'⭕️Ahamiyatsiz️': 0, '1 mln ➕': 1000000, '3 mln ➕': 3000000}
+    level_dict = {'⭕️Ahamiyatsiz': 0, "👨‍💼O'rta maxsus": 'ССПО', '👨‍🎓Oliy': "В%2FО"}
 
-                id = i['id']
-                company_name = i['company_name']
-                position_salary = i['position_salary']
-                if position_salary == None:
-                    position_salary = "Mavjud emas"
-                location = i['region']['name_uz_ln'] + ' ' + i['district']['name_uz_ln']
-                texts += f"""<b>👨‍💻{num}- Vakansiya\n\n🆔ID raqami: </b>{id}\n<b>🏢Ish beruvchi nomi: </b>{company_name}\n<b>💰Taxminiy maoshi: </b>{position_salary} so'm\n<b>📍Joylashuvi: </b>{location}\n\n➖➖➖➖➖➖➖➖➖➖\n\n"""
-                num += 1
-                ids.append(id)
-            all = soup['data']['total']
-            dan = soup['data']['from']
-            ga = soup['data']['to']
-            joriy = soup['data']['current_page']
-            end = soup['data']['last_page']
-            texts = f"<b>NATIJALAR</b>: {all} ta bo'sh ish o'rnlari topildi | {dan}-{ga}\n\n\n" + texts
-            if dan == None:
-                texts = "Sizning belgilagan filterlaringiz bo'yicha ma'lumot topilmadi, Filtrlarni o'zgartirib ko'ring"
-        except:
-            texts="Xato yuz berdi"
-            ids = 1
-            joriy = 0
-            dan = 0
-            end = 0
-        return texts, ids, joriy, dan, end
+    salary_param = f"salary={salary_dict.get(salary, 0)}&" if salary and salary != '⭕️Ahamiyatsiz️' else '&'
+    level_param = f"&min_education={level_dict.get(level, 0)}&" if level and level != '⭕️Ahamiyatsiz' else '&'
+
+    URL = f"https://ishapi.mehnat.uz/api/v1/vacancies?per_page=5{level_param}{salary_param}company_soato_code={reg2}{spec}page={page}"
+    soup = await get_site_content(URL)
+
+    try:
+        text_data = soup['data']['data']
+        texts, ids = "", []
+        for num, i in enumerate(text_data, start=soup['data']['from']):
+            ids.append(i['id'])
+            texts += (
+                f"<b>👨‍💻{num}- Vakansiya</b>\n"
+                f"🆔 ID: {i['id']}\n"
+                f"🏢 Ish beruvchi: {i['company_name']}\n"
+                f"💰 Maoshi: {i.get('position_salary', 'Mavjud emas')} so'm\n"
+                f"📍 Joylashuvi: {i['region']['name_uz_ln']} {i['district']['name_uz_ln']}\n"
+                f"➖➖➖➖➖➖➖➖➖➖\n\n"
+            )
+        return texts, ids, soup['data']['current_page'], soup['data']['from'], soup['data']['last_page']
+    except:
+        return "Xato yuz berdi", [], 0, 0, 0
 
 async def vacancie_btn(ids, joriy, ga):
-
     region_choos = types.InlineKeyboardMarkup(row_width=5)
     for name, id in zip(range(ga, ga+10), ids):
-        region_choos.insert(InlineKeyboardButton(name, callback_data=id))
-
-    region_choos.add(InlineKeyboardButton("⬅", callback_data=f"⬅{joriy}"))
-    region_choos.insert(InlineKeyboardButton("❌", callback_data="❌"))
-    region_choos.insert(InlineKeyboardButton("➡", callback_data=f"➡{joriy}"))
+        region_choos.insert(types.InlineKeyboardButton(str(name), callback_data=str(id)))
+    region_choos.add(types.InlineKeyboardButton("⬅", callback_data=f"⬅{joriy}"))
+    region_choos.insert(types.InlineKeyboardButton("❌", callback_data="❌"))
+    region_choos.insert(types.InlineKeyboardButton("➡", callback_data=f"➡{joriy}"))
     return region_choos
-
-
-
-########################                main
-async def region_btn(user_id):
-    rows = ['Barchasi', 'Andijon viloyati', 'Buxoro viloyati', 'Jizzax viloyati', 'Qashqadaryo viloyati',
-            'Navoiy viloyati', 'Namangan viloyati', 'Samarqand viloyati', 'Surxondaryo viloyati',
-            'Sirdaryo viloyati', 'Toshkent shahri', 'Toshkent viloyati', "Farg'ona viloyati", 'Xorazm viloyati',
-            "Qoraqalpog'iston Respublikasi"]
-    region_choos = types.InlineKeyboardMarkup(row_width=2)
-    title = 1
-    for row in rows:
-        reg = sql.execute(f"""SELECT region FROM users WHERE user_id = {user_id}""").fetchone()
-        if row == reg[0]:
-            region_choos.insert(InlineKeyboardButton(text=f"🟢{row}", callback_data=row))
-        else:
-            region_choos.insert(InlineKeyboardButton(row, callback_data=row))
-        title += 1
-    region_choos.add(InlineKeyboardButton("✅️Tanladim✅", callback_data="✅️Tanladim✅"))
-    return region_choos
-
-
-async def district_btn(user_id):
-    regs = sql.execute(f"""SELECT region FROM users WHERE user_id = {user_id}""").fetchone()[0]
-
-    districts = sql.execute(f"""SELECT districts FROM locations WHERE regions = "{regs}" """).fetchall()
-
-    region_choos = types.InlineKeyboardMarkup(row_width=2)
-    title = 1
-    for row in districts:
-        row = row[0]
-        reg = sql.execute(f"""SELECT district FROM users WHERE user_id = {user_id}""").fetchone()
-        if row == reg[0]:
-            region_choos.insert(InlineKeyboardButton(text=f"🟢{row}", callback_data=row))
-        else:
-            region_choos.insert(InlineKeyboardButton(row, callback_data=row))
-        title += 1
-    region_choos.add(InlineKeyboardButton("✅Tanladim✅", callback_data="✅Tanladim✅"))
-    return region_choos
-
-
-async def money_btn(user_id):
-    rows = ['⭕️Ahamiyatsiz️', '1 mln ➕', '3 mln ➕']
-    region_choos = types.InlineKeyboardMarkup(row_width=2)
-    title = 1
-    for row in rows:
-        reg = sql.execute(f"""SELECT money FROM users WHERE user_id = {user_id}""").fetchone()
-        if row == reg[0]:
-            region_choos.insert(InlineKeyboardButton(text=f"🟢{row}", callback_data=row))
-        else:
-            region_choos.insert(InlineKeyboardButton(row, callback_data=row))
-        title += 1
-    region_choos.add(InlineKeyboardButton("✅ Tanladim ✅", callback_data="✅ Tanladim ✅"))
-
-    return region_choos
-
-
-async def level_btn(user_id):
-    rows = ['️⭕️Ahamiyatsiz', "👨‍💼O'rta maxsus", '👨‍🎓Oliy']
-    region_choos = types.InlineKeyboardMarkup(row_width=2)
-    title = 1
-    for row in rows:
-        reg = sql.execute(f"""SELECT level FROM users WHERE user_id = {user_id}""").fetchone()
-        if row == reg[0]:
-            region_choos.insert(InlineKeyboardButton(text=f"🟢{row}", callback_data=row))
-        else:
-            region_choos.insert(InlineKeyboardButton(row, callback_data=row))
-        title += 1
-    region_choos.add(InlineKeyboardButton(" ✅Tanladim✅", callback_data=" ✅Tanladim✅"))
-
-    return region_choos
-
-
-async def special_btn(user_id):
-
-    specs = ["Sog'liqni saqlash", "Qurilish sohasi", "Savdo va xizmat ko'rsatish", "Qishloq xo'jaligi", "Arxitektura va Texnika", "IT sohasi", "Ta'lim sohasi", "Haydovchilik sohasi"]
-    backs = ['22,322,323,324', '71', '91,522,523', '61', '214', '213,312', '23,33', '83']
-
-    spec_choos = types.InlineKeyboardMarkup(row_width=2)
-    for spec, back in zip(specs, backs):
-        reg = sql.execute(f"""SELECT specs FROM users WHERE user_id = {user_id}""").fetchone()[0]
-        sp = str(reg)
-        if back == sp:
-            spec_choos.insert(InlineKeyboardButton(text=f"🟢{spec}", callback_data=back))
-        else:
-            spec_choos.insert(InlineKeyboardButton(spec, callback_data=back))
-    spec_choos.add(InlineKeyboardButton("✅Tanladim️✅️", callback_data="🟢Tanladim🟢"))
-    return spec_choos
-
-
-#######################
 
 async def saves_info(data):
     soup = await get_site_content(f'https://ishapi.mehnat.uz/api/v1/vacancies/{data}')
     soup1 = soup['data']
-    status = soup1["active"]
-    if status == True:
-        status = "Aktiv"
-    else:
-        status = "Band"
-    comp_name = soup1['company_name']
-    work_title = soup1['position_name']
-    salary = soup1['position_salary']
-    commitment = soup1['position_duties']
-    demand = soup1['position_requirements']
-    condition = soup1['position_conditions']
-    phones = soup1['phones']
-    address = str(soup1['region']['name_uz_ln']) + ', ' + str(soup1['district']['name_uz_ln'])
-    text = f"<b>🏢Komponiya nomi: </b>{comp_name}\n<b>🧑‍🏭Ish nomi: </b>{work_title}\n\n<b>ℹ️Ish haqida: </b>{condition}\n\n<b>📌Majburiyatlari: </b>{commitment}\n\n<b>📎Talab: </b>{demand}\n\n<b>💸Maoshi: </b>{salary}\n\n\n<b>📣Ishning holati: </b>{status}\n<b>🗺Manzili: </b>{address}\n<b>📞Telefon raqami: </b>+{phones[0]}"
-    return text
+    status = "Aktiv" if soup1["active"] else "Band"
 
+    return (
+        f"<b>🏢 Kompaniya:</b> {soup1['company_name']}\n"
+        f"<b>🧑‍🏭 Ish nomi:</b> {soup1['position_name']}\n"
+        f"<b>ℹ️ Ish haqida:</b> {soup1['position_conditions']}\n"
+        f"<b>📌 Majburiyatlari:</b> {soup1['position_duties']}\n"
+        f"<b>📎 Talab:</b> {soup1['position_requirements']}\n"
+        f"<b>💸 Maoshi:</b> {soup1.get('position_salary', 'Mavjud emas')} so'm\n"
+        f"<b>📣 Holati:</b> {status}\n"
+        f"<b>🗺 Manzil:</b> {soup1['region']['name_uz_ln']}, {soup1['district']['name_uz_ln']}\n"
+        f"<b>📞 Telefon:</b> +{soup1['phones'][0]}"
+    )
 
 # async def vacancie_btn(ent_reg, raqam):
 # 	text = ''
